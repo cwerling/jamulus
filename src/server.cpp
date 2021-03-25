@@ -896,21 +896,9 @@ static CTimingMeas JitterMeas ( 1000, "test2.dat" ); JitterMeas.Measure(); // TE
             // processing without multithreading
             if ( !bUseMultithreading )
             {
-                if ( bSingleMixServerMode && ( iChanCnt > 0 ) )
-                {
-                    // per definition in single mix server mode: only the very first connected
-                    // client at the server defines the audio mix, all other clients just reuse
-                    // the mix and coded audio data
-                    vecChannels[iCurChanID].PrepAndSendPacket ( &Socket,
-                                                                vecvecbyCodedDataOut[0],
-                                                                vecChannels[vecChanIDsCurConChan[0]].GetCeltNumCodedBytes() );
-                }
-                else
-                {
-                    // generate a separate mix for each channel, OPUS encode the
-                    // audio data and transmit the network packet
-                    MixEncodeTransmitData ( iChanCnt, iNumClients );
-                }
+                // generate a separate mix for each channel, OPUS encode the
+                // audio data and transmit the network packet
+                MixEncodeTransmitData ( iChanCnt, iNumClients );
             }
         }
 
@@ -1152,7 +1140,18 @@ void CServer::MixEncodeTransmitData ( const int iChanCnt,
         {
             // get a reference to the audio data and gain of the current client
             const CVector<int16_t>& vecsData = vecvecsData[j];
-            const float             fGain    = vecvecfGains[iChanCnt][j];
+            float             fGain    = vecvecfGains[iChanCnt][j];
+
+            if ( bSingleMixServerMode )
+            {
+                // overwrite gain with the gain of the master client (same mix for everybody!)
+                fGain    = vecvecfGains[0][j];
+                // but mute our own channel (we don't want people to hear themselves in the mix!)
+                if ( iChanCnt == j )
+                {
+                    fGain = 0.0f;
+                }
+            }
 
             // if channel gain is 1, avoid multiplication for speed optimization
             if ( fGain == 1.0f )
@@ -1210,8 +1209,21 @@ void CServer::MixEncodeTransmitData ( const int iChanCnt,
         {
             // get a reference to the audio data and gain/pan of the current client
             const CVector<int16_t>& vecsData = vecvecsData[j];
-            const float             fGain    = vecvecfGains[iChanCnt][j];
-            const float             fPan     = vecvecfPannings[iChanCnt][j];
+            float             fGain    = vecvecfGains[iChanCnt][j];
+            float             fPan     = vecvecfPannings[iChanCnt][j];
+
+            if ( bSingleMixServerMode )
+            {
+                // overwrite gain with the gain/pan of the master client ("same" mix for everybody!)
+                fGain = vecvecfGains[0][j];
+                fPan  = vecvecfPannings[0][j];
+                // but mute our own channel (we don't want people to hear themselves in the mix!)
+                if ( iChanCnt == j )
+                {
+                    fGain = 0.0f;
+                }
+            }
+
 
             // calculate combined gain/pan for each stereo channel where we define
             // the panning that center equals full gain for both channels
@@ -1378,16 +1390,8 @@ void CServer::CreateAndSendChanListForAllConChannels()
     {
         if ( vecChannels[i].IsConnected() )
         {
-            if ( bSingleMixServerMode && !bIsFirstConnectedClient )
-            {
-                // this is a single mix slave client, do not send channel list
-                vecChannels[i].CreateConClientListMes ( CVector<CChannelInfo>() );
-            }
-            else
-            {
-                // send message
-                vecChannels[i].CreateConClientListMes ( vecChanInfo );
-            }
+            // send message
+            vecChannels[i].CreateConClientListMes ( vecChanInfo );
 
             // since we detected a connection, the next client is no longer the first one
             bIsFirstConnectedClient = false;
@@ -1403,17 +1407,8 @@ void CServer::CreateAndSendChanListForAllConChannels()
 
 void CServer::CreateAndSendChanListForThisChan ( const int iCurChanID )
 {
-    // note: C++ shortcut -> GetSingleMixMasterID() function is not evaluated for normal server mode
-    if ( bSingleMixServerMode && ( iCurChanID != GetSingleMixMasterID() ) )
-    {
-        // this is a single mix slave client, do not send channel list
-        vecChannels[iCurChanID].CreateConClientListMes ( CVector<CChannelInfo>() );
-    }
-    else
-    {
-        // send connected channels list to the channel with the ID "iCurChanID"
-        vecChannels[iCurChanID].CreateConClientListMes ( CreateChannelList() );
-    }
+    // send connected channels list to the channel with the ID "iCurChanID"
+    vecChannels[iCurChanID].CreateConClientListMes ( CreateChannelList() );
 }
 
 void CServer::CreateAndSendChatTextForAllConChannels ( const int      iCurChanID,
